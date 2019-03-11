@@ -1,5 +1,7 @@
 import re
+import csv
 import json
+import logging
 import requests
 
 from urllib.parse import urljoin
@@ -15,7 +17,7 @@ class PulteScraper(object):
         
         self.params = {
             'brand': 'Pulte',
-            'state': 'Georgia',
+            'state': None,
             'region': None,
             'cityNames': None,
             'minPrice': None,
@@ -24,10 +26,39 @@ class PulteScraper(object):
             'maxBedrooms': None,
             'minBathrooms': None,
             'maxBathrooms': None,
-            #'pageSize': 10,
             'pageSize': 50,
             'pageNumber': 0
         }
+
+        FORMAT = "%(asctime)s [ %(filename)s:%(lineno)s - %(funcName)s() ] %(message)s"
+        logging.basicConfig(format=FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
+
+    def csv_save(self, data):
+        headers = [
+            'Community',
+            'Community URL',
+            'Address',
+            'URL',
+            'Price'
+        ]
+
+        with open('pulte.csv', 'w') as fp:
+            writer = csv.writer(fp, quoting=csv.QUOTE_NONNUMERIC)
+            writer.writerow(headers)
+
+            for d in data:
+                row = [
+                    d.get('community', ''),
+                    d.get('community_url', ''),
+                    d.get('address', ''),
+                    d.get('url', ''),
+                    d.get('price', ''),
+                ]
+                row = [ i for i in row  ]
+                writer.writerow(row)
 
     def scrape_listings(self, soup):
         homes = []
@@ -59,6 +90,7 @@ class PulteScraper(object):
             home['price'] = d.text.strip()
             homes.append(home)
 
+        self.logger.info(f'Returning {len(homes)} homes')
         return homes
 
     def get_states(self):
@@ -76,7 +108,8 @@ class PulteScraper(object):
         states = [
             d['StateName'] for d in data[0]['States']
         ]
-        
+
+        self.logger.info(f'Returning {len(states)} states')
         return states
         
     def scrape(self):
@@ -96,7 +129,11 @@ class PulteScraper(object):
                 homes += self.scrape_listings(soup)
 
                 self.params['pageNumber'] += 1
-            
+
+            self.logger.info(f'Scraped {len(homes)} for state {state}')
+            break
+
+        self.csv_save(homes)
         return homes
     
 if __name__ == '__main__':
