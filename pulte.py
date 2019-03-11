@@ -1,6 +1,7 @@
 import re
 import csv
 import json
+import time
 import logging
 import requests
 
@@ -117,23 +118,31 @@ class PulteScraper(object):
         states = self.get_states()
 
         for state in states:
+            state_homes = []
+
+            self.params['pageNumber'] = 0
             self.params['state'] = state
             
             while True:
+                self.logger.info(f"Scraping page {self.params['pageNumber']} for state {state}")
+
                 resp = self.session.get(self.url, headers=self.headers, params=self.params)
                 if len(resp.text.strip()) == 0:
                     break
             
                 soup = BeautifulSoup(resp.text, 'html.parser')
 
-                homes += self.scrape_listings(soup)
+                state_homes += self.scrape_listings(soup)
+                homes += state_homes
 
                 self.params['pageNumber'] += 1
+                time.sleep(1)
 
-            self.logger.info(f'Scraped {len(homes)} for state {state}')
-            break
+            self.logger.info(f'Scraped {len(state_homes)} for state {state}')
 
+        self.logger.info(f'Scraped {len(homes)} in total')
         self.csv_save(homes)
+
         return homes
     
 if __name__ == '__main__':
