@@ -402,7 +402,7 @@ class DRHortonScraper(object):
                 jdat = resp.json()
             except Exception as e:
                 self.logger.warning(f'Exception {e}')
-                return
+                break
 
             for item in jdat['HtmlItems']:
                 h = BeautifulSoup(item, 'html.parser')
