@@ -5,6 +5,9 @@ import time
 import logging
 import requests
 
+from redis import StrictRedis
+from redis.exceptions import RedisError
+from rediscache import RedisCache
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
@@ -266,6 +269,25 @@ class DRHortonScraper(object):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
 
+        self.cache = None
+        #self.init_cache()
+
+    def init_cache(self):
+        redis_config = {
+            'host': 'localhost',
+            'port': 6379,
+            'db': 0,
+            'password': 'foobared'
+        }
+
+        client = StrictRedis(**redis_config)
+        try:
+            client.ping()
+        except RedisError as ex:
+            exit(f'Failed to connect to Redis - {ex}, exiting...' )
+
+        self.cache = RedisCache(client=client)
+
     def csv_save(self, data):
         headers = [
             'URL',            
@@ -395,13 +417,29 @@ class DRHortonScraper(object):
         }
 
         self.logger.debug(f'Getting move in ready homes for {community_id}')
-        
+
+        if self.cache:
+            try:
+                cached_homes = self.cache[community_id]
+            except KeyError:
+                pass
+            else:
+                homes = json.loads(cached_homes)
+                self.logger.info(f'Returning {len(homes)} homes from cache')
+                return homes
+
         while True:
-            resp = self.session.post(url, data=data)
+            time.sleep(5)
             try:            
+                resp = self.session.post(url, data=data)
                 jdat = resp.json()
+            except requests.exceptions.ConnectionError as e:
+                self.logger.warning(f'Exception {e}')
+                time.sleep(60)
+                continue
             except Exception as e:
                 self.logger.warning(f'Exception {e}')
+                homes = [] # reset homes
                 break
 
             for item in jdat['HtmlItems']:
@@ -415,7 +453,9 @@ class DRHortonScraper(object):
                 break
             
             data['StartIndex'] = len(homes)
-            time.sleep(1)
+
+        if self.cache and len(homes) > 0:
+            self.cache[community_id] = json.dumps(homes)
 
         return homes
     
@@ -426,14 +466,13 @@ class DRHortonScraper(object):
         for state in DRHortonScraper.states:
             self.get_state_communities(state, communities)
             time.sleep(5)
-        
+            break #XXX
         self.logger.info(f'{len(communities)} communities')
         
         for i,cid in enumerate(communities, 1):
             self.logger.info(f'{i}/{len(communities)}')
             m = self.get_movein_ready(cid)
             homes += m
-            time.sleep(1)
 
         self.logger.info(f'Scraped {len(homes)} in total')
         self.csv_save(homes)
