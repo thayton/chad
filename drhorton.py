@@ -466,7 +466,7 @@ class DRHortonScraper(object):
         for state in DRHortonScraper.states:
             self.get_state_communities(state, communities)
             time.sleep(5)
-            break #XXX
+
         self.logger.info(f'{len(communities)} communities')
         
         for i,cid in enumerate(communities, 1):
