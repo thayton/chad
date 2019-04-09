@@ -7,12 +7,16 @@ from bs4 import BeautifulSoup
 
 class SheaHomesScraper(object):
     def __init__(self):
-        self.url = 'https://www.sheahomes.com/new-homes/colorado/denver-area/parker/stonewalk-at-stepping-stone/'
+        #self.url = 'https://www.sheahomes.com/new-homes/colorado/denver-area/parker/stonewalk-at-stepping-stone/'
+        self.url = 'https://www.sheahomes.com/new-homes/florida/central-florida/ocala/trilogy-at-ocala-preserve/'
         self.session = requests.Session()
 
-    def submit_aspx(self):
+    def submit_community_aspx(self):
         '''
-        AVAILABLE QUICK MOVE-IN HOMES is loaded via AJAX ASPX POST
+        We only need to submit the form is there is a View More button. Otherwise
+        all of the results are already in the HTML. In the case where there are 
+        more homes to load then the AVAILABLE QUICK MOVE-IN HOMES are loaded via 
+        an AJAX ASPX POST. 
 
         We simulate this post and return the HTML from the response
 
@@ -20,19 +24,26 @@ class SheaHomesScraper(object):
         '''
         resp = self.session.get(self.url)
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
+
         form = soup.find('form', id='form')
         data = []
 
+        i = form.find('input', attrs={'value': 'View More'})
+        if not i:
+            return soup.prettify()
+
+        # The ID of this div is the same as what gets passed in the manScript form data
+        # but with the '_' characters replaced with '$'
+        r = re.compile(r'^p_lt_ctl\d+_pageplaceholder_p_lt_ctl\d+_QMIHomes_CMSUpdatePanel\d+$')
+        update_div = soup.find('div', id=r)
+        update_div_v = update_div['id'].replace('_', '$')
+        
         # Load form <inputs>
         for i in form.find_all('input', attrs={'name': True}):
-            if i.get('type') == 'submit':
-                if i.get('value') == 'View More':
-                    continue
-                else:
-                    data.append(('manScript', 'p$lt$ctl03$pageplaceholder$p$lt$ctl05$QMIHomes$CMSUpdatePanel2' + '|' + i['name']))
-            
-            if i['type'] == 'checkbox':
+            if i.get('type') == 'submit' and i.get('value') == 'View More':
+                data.append(('manScript', update_div_v + '|' + i['name']))
+                data.append((i['name'], i.get('value')))                
+            elif i['type'] == 'checkbox':
                 data.append((i['name'], i.get('checked') == '' and 'on' or 'off'))
             else:
                 data.append((i['name'], i.get('value')))
@@ -57,12 +68,12 @@ class SheaHomesScraper(object):
         it = iter(resp.text.split('|'))
         kv = dict(zip(it, it))
 
-        return kv['p_lt_ctl03_pageplaceholder_p_lt_ctl05_QMIHomes_CMSUpdatePanel2']
+        return kv[update_div['id']]
     
     def scrape(self):
         lots = []
         
-        html = self.submit_aspx()
+        html = self.submit_community_aspx()
         soup = BeautifulSoup(html, 'html.parser')
         
         for d in soup.select('section#qmi-homes div.card-content'):
@@ -82,13 +93,13 @@ class SheaHomesScraper(object):
         resp = self.session.get(url)
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        script = soup.find('script', attrs={'type': 'application/ld+json'})
-        data = json.loads(script.text)
-        addr = data['address']
-
-        # Address
-        lot['addr'] = addr['streetAddress'] + '\n' + \
-                      addr['addressLocality'] + ', ' + addr['addressRegion'], addr['postalCode']
+        addr = soup.select_one('div.about-address')
+        addr.select_one('p.address-label').extract()
+        
+        addr = addr.text.strip().split('\n')
+        addr = ' '.join(a.strip() for a in addr)
+        
+        lot['addr'] = addr
 
         # Extract price and sqft
         p = soup.find('p', attrs={'class': 'large'})
