@@ -1,5 +1,6 @@
 import re
 import json
+import logging
 import requests
 
 from urllib.parse import urljoin
@@ -7,11 +8,29 @@ from bs4 import BeautifulSoup
 
 class SheaHomesScraper(object):
     def __init__(self):
-        #self.url = 'https://www.sheahomes.com/new-homes/colorado/denver-area/parker/stonewalk-at-stepping-stone/'
-        self.url = 'https://www.sheahomes.com/new-homes/florida/central-florida/ocala/trilogy-at-ocala-preserve/'
+        self.url = 'https://www.sheahomes.com/new-homes/'
+        self.params = {
+            'state': 'any',
+            'bedrooms': 'any',
+            'bathrooms': 'any',
+            'pricemin': 'any',
+            'pricemax': 'any',
+            'quickmovein': 'on'
+        }
+        self.headers = {
+            'X-Requested-With': 'XMLHttpRequest',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36',
+        }
+
+        FORMAT = "%(asctime)s [ %(filename)s:%(lineno)s - %(funcName)s() ] %(message)s"
+        logging.basicConfig(format=FORMAT, datefmt='%Y-%m-%d %H:%M:%S')
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
+
         self.session = requests.Session()
 
-    def submit_community_aspx(self):
+    def submit_community_aspx(self, url):
         '''
         We only need to submit the form is there is a View More button. Otherwise
         all of the results are already in the HTML. In the case where there are 
@@ -22,7 +41,7 @@ class SheaHomesScraper(object):
 
         ref: http://toddhayton.com/2015/05/04/scraping-aspnet-pages-with-ajax-pagination/
         '''
-        resp = self.session.get(self.url)
+        resp = self.session.get(url)
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         form = soup.find('form', id='form')
@@ -57,33 +76,96 @@ class SheaHomesScraper(object):
         data['__SCROLLPOSITIONX'] = 0        
         data['__SCROLLPOSITIONY'] = 0
 
-        headers = {
-            'X-Requested-With': 'XMLHttpRequest',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36',
-        }
-        
         url = urljoin(self.url, form['action'])
-        resp = self.session.post(url, headers=headers, data=data)
+        resp = self.session.post(url, headers=self.headers, data=data)
 
         it = iter(resp.text.split('|'))
         kv = dict(zip(it, it))
 
         return kv[update_div['id']]
-    
+
+    def submit_quick_moveins_search(self):
+        resp = self.session.get(self.url, params=self.params)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+
+        form = soup.find('form', id='form')
+        data = []
+
+        # p_lt_ctl03_pageplaceholder_p_lt_ctl02_FYHSearchResultsFilter_upCommunityListing
+        r = re.compile(r'p_lt_ctl\d+_pageplaceholder_p_lt_ctl\d+_FYHSearchResultsFilter_upCommunityListing')
+        update_div = soup.find('div', id=r)
+        update_div_v = update_div['id'].replace('_', '$')
+
+        # Load form <inputs>
+        for i in form.find_all('input', attrs={'name': True}):
+            if i['type'] == 'checkbox':
+                continue
+            elif i.get('type') == 'submit' and i.get('id') == 'btnHiddenDeferInitialDataLoad':
+                data.append(('manScript', update_div_v + '|' + i['name']))
+                data.append((i['name'], i.get('value')))
+            else:
+                data.append((i['name'], i.get('value')))
+
+        for s in form.find_all('select', attrs={'name': True}):
+            if s['name'] in ['type', 'features']:
+                continue
+            data.append((s['name'], s.option.get('value')))
+
+        data = dict(data)
+
+        # The following are set dynamically by javascript code
+        data['__ASYNCPOST'] = 'true'
+        data['__EVENTTARGET'] = None
+        data['__EVENTARGUMENT'] = None
+        data['__SCROLLPOSITIONX'] = 0
+        data['__SCROLLPOSITIONY'] = 0
+
+        url = urljoin(self.url, form['action'])
+        resp = self.session.post(url, headers=self.headers, data=data)
+
+        # Looking for something like:
+        # |392405|updatePanel|p_lt_ctl03_pageplaceholder_p_lt_ctl02_FYHSearchResultsFilter_upCommunityListing|
+        r = re.compile(r'\|(\d+)\|updatePanel\|%s\|' % update_div['id'])
+        m = re.search(r, resp.text)
+
+        i = m.end()
+        j = m.end() + int(m.group(1))
+
+        return resp.text[i:j]
+
+    def get_community_links(self):
+        html = self.submit_quick_moveins_search()
+        soup = BeautifulSoup(html, 'html.parser')
+        urls = []
+
+        for a in soup.select('a.card-community'):
+            url = urljoin(self.url, a['href'])
+            urls.append(url)
+
+        self.logger.info(f'Returning {len(urls)} move in ready communities')
+        return urls
+
     def scrape(self):
         lots = []
+        urls = self.get_community_links()
         
-        html = self.submit_community_aspx()
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        for d in soup.select('section#qmi-homes div.card-content'):
-            lot = {}
-            lot['url'] = urljoin(self.url, d.a['href'])
+        for url in urls:
+            self.logger.info(f'Getting movein ready homes at {url}')
+
+            html = self.submit_community_aspx(url)
+            soup = BeautifulSoup(html, 'html.parser')
+            divs = soup.select('section#qmi-homes div.card-content')
+
+            self.logger.info(f'{len(divs)} movein ready homes')
+
+            for d in divs:
+                lot = {}
+                lot['url'] = urljoin(self.url, d.a['href'])
             
-            data = self.scrape_lot(lot['url'])
+                data = self.scrape_lot(lot['url'])
             
-            lot.update(data)
-            lots.append(lot)
+                lot.update(data)
+                lots.append(lot)
 
         print(json.dumps(lots, indent=2))
         
