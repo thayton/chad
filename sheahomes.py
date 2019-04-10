@@ -1,4 +1,5 @@
 import re
+import csv
 import json
 import logging
 import requests
@@ -29,6 +30,36 @@ class SheaHomesScraper(object):
         self.logger.setLevel(logging.DEBUG)
 
         self.session = requests.Session()
+
+    def csv_save(self, data):
+        headers = [
+            'URL',
+            'Address',
+            'Sqft',
+            'Price',
+            'Stories',
+            'Beds',
+            'Baths',
+            'Garage'
+        ]
+
+        with open('sheahomes.csv', 'w') as fp:
+            writer = csv.writer(fp, quoting=csv.QUOTE_NONNUMERIC)
+            writer.writerow(headers)
+
+            for d in data:
+                row = [
+                    d.get('url', ''),
+                    d.get('address', ''),
+                    d.get('sqft', ''),
+                    d.get('price', ''),
+                    d.get('story', ''),
+                    d.get('bed', ''),
+                    d.get('bath', ''),
+                    d.get('car', '')
+                ]
+                row = [ i for i in row  ]
+                writer.writerow(row)
 
     def submit_community_aspx(self, url):
         '''
@@ -167,7 +198,7 @@ class SheaHomesScraper(object):
                 lot.update(data)
                 lots.append(lot)
 
-        print(json.dumps(lots, indent=2))
+        self.csv_save(lots)
         
     def scrape_lot(self, url):
         lot = {}
@@ -181,7 +212,7 @@ class SheaHomesScraper(object):
         addr = addr.text.strip().split('\n')
         addr = ' '.join(a.strip() for a in addr)
         
-        lot['addr'] = addr
+        lot['address'] = addr
 
         # Extract price and sqft
         p = soup.find('p', attrs={'class': 'large'})
@@ -193,6 +224,18 @@ class SheaHomesScraper(object):
         r = re.compile('([\d,]+) Sq\. Ft', re.I)
         m = re.search(r, p.text)
         lot['sqft'] = m.group(1)
+
+        icons = {
+            'story': 'Stories Icon',
+            'bed': 'Bedroom Icon',
+            'bath': 'Bathroom Icon',
+            'car': 'Garage Icon'
+        }
+
+        for k,v in icons.items():
+            img = soup.find('img', attrs={'alt': v})
+            li = img.find_parent('li')
+            lot[k] = li.p.text.strip()
 
         # Raw text
         lot['blurb'] = '\n'.join([
