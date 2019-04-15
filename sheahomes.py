@@ -1,5 +1,6 @@
 import re
 import csv
+import time
 import json
 import logging
 import requests
@@ -62,6 +63,7 @@ class SheaHomesScraper(object):
                 writer.writerow(row)
 
     def submit_community_aspx(self, url):
+
         '''
         We only need to submit the form is there is a View More button. Otherwise
         all of the results are already in the HTML. In the case where there are 
@@ -72,11 +74,25 @@ class SheaHomesScraper(object):
 
         ref: http://toddhayton.com/2015/05/04/scraping-aspnet-pages-with-ajax-pagination/
         '''
-        resp = self.session.get(url)
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        max_tries = 3
+        num_tries = 0
 
+        while num_tries < max_tries:
+            # Sometimes the server gives us a 502
+            resp = self.session.get(url)
+            if resp.status_code == 200:
+                break
+            num_tries += 1
+            time.sleep(5)
+
+        soup = BeautifulSoup(resp.text, 'html.parser')
         form = soup.find('form', id='form')
         data = []
+
+        if not form:
+            self.logger.error('Form not found')
+            print(soup.prettify())
+            return None
 
         i = form.find('input', attrs={'value': 'View More'})
         if not i:
@@ -184,6 +200,10 @@ class SheaHomesScraper(object):
             self.logger.info(f'Getting movein ready homes at {url}')
 
             html = self.submit_community_aspx(url)
+            if html is None:
+                self.logger.warning(f'Skipping community at {url}')
+                continue
+
             soup = BeautifulSoup(html, 'html.parser')
             divs = soup.select('section#qmi-homes div.card-content')
 
@@ -192,18 +212,24 @@ class SheaHomesScraper(object):
             for d in divs:
                 lot = {}
                 lot['url'] = urljoin(self.url, d.a['href'])
-            
+
                 data = self.scrape_lot(lot['url'])
-            
-                lot.update(data)
-                lots.append(lot)
+                if data is not None:
+                    lot.update(data)
+                    lots.append(lot)
 
         self.csv_save(lots)
         
     def scrape_lot(self, url):
         lot = {}
-        
+
+        self.logger.info(f'Getting info for lot at {url}')
+
         resp = self.session.get(url)
+        if resp.status_code != 200:
+            self.logger.warning('Request to {url} failed: {resp.status_code} - {resp.reason}')
+            return None
+
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         addr = soup.select_one('div.about-address')
