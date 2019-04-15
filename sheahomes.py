@@ -227,7 +227,7 @@ class SheaHomesScraper(object):
 
         resp = self.session.get(url)
         if resp.status_code != 200:
-            self.logger.warning('Request to {url} failed: {resp.status_code} - {resp.reason}')
+            self.logger.warning(f'Request to {url} failed: {resp.status_code} - {resp.reason}')
             return None
 
         soup = BeautifulSoup(resp.text, 'html.parser')
