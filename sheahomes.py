@@ -63,7 +63,6 @@ class SheaHomesScraper(object):
                 writer.writerow(row)
 
     def submit_community_aspx(self, url):
-
         '''
         We only need to submit the form is there is a View More button. Otherwise
         all of the results are already in the HTML. In the case where there are 
@@ -124,7 +123,17 @@ class SheaHomesScraper(object):
         data['__SCROLLPOSITIONY'] = 0
 
         url = urljoin(self.url, form['action'])
-        resp = self.session.post(url, headers=self.headers, data=data)
+
+        num_tries = 0
+        while num_tries < max_tries:
+            resp = self.session.post(url, headers=self.headers, data=data)
+            if resp.status_code == 200:
+                break
+
+            self.logger.warning(f'Post to {url} failed: {resp.status_code} - {resp.reason}')
+            
+            num_tries += 1
+            time.sleep(5)
 
         it = iter(resp.text.split('|'))
         kv = dict(zip(it, it))
